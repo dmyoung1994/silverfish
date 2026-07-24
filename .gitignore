@@ -1,0 +1,15 @@
+/target
+/node_modules
+/dist
+/apps/desktop/dist
+/apps/desktop/public/downloads/*.dmg
+/apps/desktop/src-tauri/gen
+**/node_modules
+**/target
+**/.wrangler
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+!.env.oss
