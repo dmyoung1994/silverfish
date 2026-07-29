@@ -1,29 +1,56 @@
 # Silverfish
 
-Silverfish is a multiplayer client for a host-owned Codex session. The host runs the real agent and workspace locally; invited collaborators join in a browser and share prompts, steering, interruption, streamed commands and diffs, and one-time approvals.
+Silverfish is a multiplayer client for a host-owned local coding agent. The host runs the real Codex or Claude Code session and workspace locally; invited collaborators join in a browser and share prompts, steering, interruption, streamed commands and diffs, and one-time approvals.
 
 Silverfish is MIT-licensed and designed to be self-hosted. This repository is
 the complete self-hosted product and does not depend on an external service.
 
 This repository contains a working macOS-first foundation:
 
-- a Tauri 2 host application using `codex app-server` over local stdio;
+- a Tauri 2 host application using Codex app-server or Claude Code over local stdio;
 - a shared React room UI for the host and browser guests;
 - a self-hosted Rust WebSocket relay with per-invite capability tokens;
 - browser/Rust AES-256-GCM room envelopes whose key never reaches the relay;
 - an ordered host-authoritative prompt queue and reconnect snapshots;
 - fail-closed pre-turn recovery checkpoints in the host's application data;
-- a narrow Codex method allowlist with no direct shell, account, configuration, or filesystem API exposure.
+- a shared agent-skills pane with GitHub skill installation to the host's existing agent skill path;
+- a single capability-bridge MCP that discovers and invokes only the upstream tools the active task needs.
 
 ## Prerequisites
 
 - macOS with Rust 1.96+, Node 22+, and npm
-- an authenticated `codex` CLI 0.144.1 or newer
+- an authenticated `codex` CLI 0.144.1 or newer, or authenticated Claude Code
 - optionally, [`dcg`](https://github.com/Dicklesworthstone/destructive_command_guard) for an additional destructive-command guard
 
 The desktop refuses to connect when Codex is missing or incompatible. `dcg` is optional defense in depth and can be installed from its dependency row in the app. Codex remains pinned to `workspace-write` with granular interactive approvals and permission escalation disabled.
 
 Finder-launched macOS apps do not inherit your terminal's `PATH`. Silverfish therefore checks common Homebrew, local npm, Volta, asdf, mise, nvm, and fnm install locations in addition to `PATH`. Set `SILVERFISH_CODEX_PATH` to the absolute path of the CLI if Codex is installed elsewhere.
+
+Set `SILVERFISH_CLAUDE_PATH` to the absolute Claude Code CLI path if needed.
+
+## Agent skills and MCP capability bridge
+
+Silverfish shows the active host agent's skills in every room. Hosts can search
+the shared list, add a skill to the next prompt, or install a GitHub skill into
+the current agent's normal skill directory: Codex uses its existing
+`CODEX_HOME/skills`, while Claude Code uses `.claude/skills` in the workspace.
+
+For MCP servers, Silverfish gives the agent one MCP only:
+`silverfish-capability-bridge`. The bridge exposes `search_capabilities`
+and `execute`; it starts an upstream MCP only after the agent discovers and
+selects a needed capability. This keeps unrelated tool schemas out of the
+agent's context while retaining access to the configured tools.
+
+Configure upstream stdio MCP servers in one of these locations, in precedence
+order:
+
+1. `SILVERFISH_MCP_BRIDGE_CONFIG`
+2. `.silverfish/mcp-servers.json` inside the workspace
+3. `$CODEX_HOME/local-mcp-broker/servers.json`
+
+The configuration is a JSON object with an `mcpServers` map, using the usual
+`command`, `args`, and optional `env` fields. `SILVERFISH_MCP_BRIDGE_PATH`
+can override the bundled bridge script for development.
 
 ## Develop locally
 
@@ -115,6 +142,7 @@ cargo fmt --all -- --check
 cargo test --workspace
 npm run typecheck
 npm run build
+npm run test:mcp-bridge
 npm run smoke:codex
 npm run smoke:relay
 ```

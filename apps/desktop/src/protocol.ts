@@ -19,6 +19,12 @@ export interface Participant {
   isHost: boolean;
 }
 
+export interface AgentSkill {
+  name: string;
+  description: string;
+  source: string;
+}
+
 export interface QueuedPrompt {
   id: string;
   author: string;
@@ -49,7 +55,9 @@ export interface ApprovalRequest {
 export interface RoomSnapshot {
   sequence: number;
   projectName: string;
+  agentName?: string;
   participants: Participant[];
+  skills: AgentSkill[];
   queue: QueuedPrompt[];
   queuePaused: boolean;
   activeTurnId?: string;
@@ -68,6 +76,7 @@ export interface RecoveryPointSummary {
 export type HostEvent =
   | { type: "snapshot"; state: RoomSnapshot }
   | { type: "presence"; participants: Participant[] }
+  | { type: "skillsUpdated"; skills: AgentSkill[] }
   | { type: "queueUpdated"; queue: QueuedPrompt[]; paused: boolean }
   | { type: "turnState"; active: boolean; turnId?: string }
   | { type: "timeline"; item: TimelineItem }

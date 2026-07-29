@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { AgentSkill } from "./protocol";
 
 export interface CodexStatus {
   installed: boolean;
@@ -9,6 +10,33 @@ export interface CodexStatus {
   dcgInstalled: boolean;
   dcgHookActive: boolean;
 }
+
+export type AgentKind = "codex" | "claude";
+export type AgentModel = "default" | "gpt-5.6-terra" | "gpt-5.6-sol" | "opus" | "sonnet";
+
+export interface ClaudeStatus {
+  installed: boolean;
+  version?: string;
+  approvalMediated: boolean;
+}
+
+export interface AgentStatus {
+  codex: CodexStatus;
+  claude: ClaudeStatus;
+}
+
+export const AGENT_MODELS: Record<AgentKind, ReadonlyArray<{ value: AgentModel; label: string }>> = {
+  codex: [
+    { value: "default", label: "Default" },
+    { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+    { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+  ],
+  claude: [
+    { value: "default", label: "Default" },
+    { value: "opus", label: "Opus" },
+    { value: "sonnet", label: "Sonnet" },
+  ],
+};
 
 export type OptionalDependency = "dcg";
 
@@ -29,9 +57,11 @@ export interface RecoveryPoint {
 }
 
 export const codex = {
-  status: () => invoke<CodexStatus>("codex_status"),
+  status: () => invoke<AgentStatus>("agent_status"),
   installOptionalDependency: (dependency: OptionalDependency) => invoke<CodexStatus>("install_optional_dependency", { dependency }),
-  connect: () => invoke<void>("connect_codex"),
+  listSkills: (workspace: string | undefined, agent: AgentKind) => invoke<AgentSkill[]>("list_agent_skills", { workspace, agent }),
+  installSkillFromGitHub: (source: string, workspace: string, agent: AgentKind) => invoke<AgentSkill[]>("install_agent_skill", { source, workspace, agent }),
+  connect: (agent: AgentKind, model: AgentModel, cwd: string) => invoke<void>("connect_agent", { agent, model, cwd }),
   listThreads: (cwd?: string) => invoke<{ data: CodexThread[] }>("list_threads", { cwd }),
   startThread: (cwd: string) => invoke<{ thread: CodexThread }>("start_thread", { cwd }),
   resumeThread: (threadId: string, cwd: string) => invoke<{ thread: CodexThread }>("resume_thread", { threadId, cwd }),
@@ -43,6 +73,9 @@ export const codex = {
   createRecoveryPoint: (workspace: string) => invoke<RecoveryPoint>("create_recovery_point", { workspace }),
   restoreRecoveryPoint: (workspace: string, checkpointId: string) => invoke<RecoveryPoint>("restore_recovery_point", { workspace, checkpointId }),
   appendAuditEvent: (roomId: string, sequence: number, event: unknown) => invoke<void>("append_audit_event", { roomId, sequence, event }),
+  takeHostCampaign: () => invoke<string | null>("take_host_campaign"),
+  onHostCampaign: (callback: (campaign: string) => void): Promise<UnlistenFn> =>
+    listen<string>("host-campaign-opened", ({ payload }) => callback(payload)),
   onEvent: (callback: (event: Record<string, unknown>) => void): Promise<UnlistenFn> =>
     listen<Record<string, unknown>>("codex-event", ({ payload }) => callback(payload)),
 };

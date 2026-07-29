@@ -19,12 +19,12 @@ const steps = [
   {
     number: "01",
     title: "Start locally",
-    copy: "Choose a workspace. Silverfish starts a fresh Codex thread on your Mac.",
+    copy: "Choose a workspace and the local coding agent you already use.",
   },
   {
     number: "02",
     title: "Copy one link",
-    copy: "Invite collaborators without sharing your Codex login or workspace credentials.",
+    copy: "Invite collaborators without sharing your agent login, skills, or workspace credentials.",
   },
   {
     number: "03",
@@ -34,7 +34,7 @@ const steps = [
 ] as const;
 
 const securityPoints = [
-  ["Credentials stay local", "Your Codex login never leaves the host Mac."],
+  ["Credentials stay local", "Your agent login never leaves the host Mac."],
   ["End-to-end encrypted", "Room content is encrypted before it reaches the relay."],
   ["Approval gated", "Sensitive commands still require an explicit human decision."],
   ["Recovery before every turn", "The host can restore a local checkpoint when work goes sideways."],
@@ -73,7 +73,7 @@ function RoomPreview({ detailed = false }: { detailed?: boolean }) {
             <p>Make connecting create the room on a new thread automatically.</p>
           </div>
           <div className="preview-message agent">
-            <div><span className="preview-agent"><SilverfishMark size={14} /></span><strong>Codex</strong><small className="working">working</small></div>
+            <div><span className="preview-agent"><SilverfishMark size={14} /></span><strong>Local agent</strong><small className="working">working</small></div>
             <p>I’ll move room creation behind a successful connection and start a clean thread for the selected workspace.</p>
           </div>
           <div className="preview-tool">
@@ -86,7 +86,7 @@ function RoomPreview({ detailed = false }: { detailed?: boolean }) {
               <code>+ await codex.startThread(cwd)</code>
             </div>
           ) : null}
-          <div className="preview-composer"><MessageSquarePlus size={14} /><span>Ask Codex to build, inspect, or change something…</span><b>↵</b></div>
+          <div className="preview-composer"><MessageSquarePlus size={14} /><span>Ask the agent to build, inspect, or change something…</span><b>↵</b></div>
         </div>
         <aside className="preview-sidebar">
           <header><Users size={12} /> IN THIS ROOM <span>3</span></header>
@@ -116,8 +116,8 @@ export function LandingPage() {
 
       <section className="landing-hero">
         <div className="hero-copy">
-          <h1>Build together.<br />One agent,<br /><span>everyone in the room.</span></h1>
-          <p>Silverfish turns a local Codex session into a shared workspace for prompts, steering, approvals, commands, and diffs—while your machine stays in control.</p>
+          <h1>Build together.<br /><span>Same agent.</span></h1>
+          <p>Bring multiple human brains to one local Codex or Claude Code project—without asking anyone to adopt your setup, skills, or workflow.</p>
           <div className="hero-actions">
             <DownloadLink />
             <a className="text-link" href="#how-it-works">See how it works <ArrowRight size={17} /></a>
@@ -130,7 +130,7 @@ export function LandingPage() {
       <section className="process-section" id="how-it-works">
         <div className="section-heading">
           <h2>One host. One room.<br />A shared flow.</h2>
-          <p>The real agent and workspace stay on the host. Everyone else joins from a browser.</p>
+          <p>The real agent, its skills, and the workspace stay on the host. Everyone else joins from a browser.</p>
         </div>
         <div className="process-rail">
           {steps.map((step) => (
@@ -146,11 +146,12 @@ export function LandingPage() {
       <section className="session-section">
         <div className="session-copy">
           <h2>The whole session,<br />in view.</h2>
-          <p>Everyone sees the same timeline. The host keeps the real agent, files, credentials, and recovery points local.</p>
+          <p>Everyone sees the same timeline, shared skills, and MCP capabilities. The host keeps the real agent, files, credentials, and recovery points local.</p>
           <ul>
             <li><Check size={15} /> Shared prompts and live steering</li>
             <li><Check size={15} /> Streamed commands and readable diffs</li>
             <li><Check size={15} /> One-time approvals with attribution</li>
+            <li><Check size={15} /> Shared agent skills and a token-efficient MCP bridge</li>
           </ul>
         </div>
         <RoomPreview detailed />
@@ -177,7 +178,7 @@ export function LandingPage() {
 
       <section className="landing-cta">
         <div>
-          <h2>Bring your people<br />into the room.</h2>
+          <h2>Bring your people<br />to the project.</h2>
           <p>Download Silverfish for an Apple silicon Mac and start a shared Codex session in minutes.</p>
         </div>
         <div className="cta-download"><DownloadLink /><span>Apple silicon · macOS 13+ · preview build</span></div>

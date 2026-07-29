@@ -17,6 +17,7 @@ import {
   MessageSquarePlus,
   Pause,
   Play,
+  Search,
   Send,
   ShieldCheck,
   Sparkles,
@@ -26,7 +27,7 @@ import {
 } from "lucide-react";
 import { LandingPage } from "./LandingPage";
 import { SilverfishMark } from "./SilverfishMark";
-import { codex, type CodexStatus, type OptionalDependency } from "./codex";
+import { AGENT_MODELS, codex, type AgentKind, type AgentModel, type AgentStatus, type OptionalDependency } from "./codex";
 import { decodeBase64Url, decryptJson, encodeBase64Url, encryptJson, generateRoomKey } from "./crypto";
 import type {
   ApprovalDecision,
@@ -54,7 +55,9 @@ import {
 const emptySnapshot: RoomSnapshot = {
   sequence: 0,
   projectName: "",
+  agentName: "Codex",
   participants: [],
+  skills: [],
   queue: [],
   queuePaused: false,
   timeline: [],
@@ -88,7 +91,9 @@ function isTauriApp(): boolean {
 }
 
 function HostApp() {
-  const [status, setStatus] = useState<CodexStatus>();
+  const [status, setStatus] = useState<AgentStatus>();
+  const [agent, setAgent] = useState<AgentKind>("codex");
+  const [model, setModel] = useState<AgentModel>("default");
   const [cwd, setCwd] = useState("");
   const [relayUrl, setRelayUrl] = useState(defaultRelayUrl);
   const [starting, setStarting] = useState(false);
@@ -108,6 +113,10 @@ function HostApp() {
   useEffect(() => {
     void codex.status().then(setStatus).catch(() => setError("Open this page in the Silverfish desktop app to host a room."));
   }, []);
+
+  useEffect(() => {
+    if (!AGENT_MODELS[agent].some((option) => option.value === model)) setModel("default");
+  }, [agent, model]);
 
   async function chooseWorkspace() {
     setError("");
@@ -129,7 +138,7 @@ function HostApp() {
     setError("");
     try {
       const nextStatus = await codex.installOptionalDependency(dependency);
-      setStatus(nextStatus);
+      setStatus((current) => current ? { ...current, codex: nextStatus } : current);
       if (dependency === "dcg" && (!nextStatus.dcgInstalled || !nextStatus.dcgHookActive)) {
         setError("dcg was installed, but its Codex hook could not be verified. Click the dependency again to retry configuration.");
       }
@@ -148,8 +157,9 @@ function HostApp() {
     setStarting(true);
     setError("");
     try {
-      await codex.connect();
+      await codex.connect(agent, model, cwd);
       const thread = (await codex.startThread(cwd)).thread;
+      const skills = await codex.listSkills(cwd, agent).catch(() => []);
       const room = await createRelayRoom(relayUrl);
       const key = generateRoomKey();
       const socket = openRelaySocket(socketUrl(relayUrl, room.roomId, "host"), room.hostToken);
@@ -159,12 +169,15 @@ function HostApp() {
         key,
         thread.id,
         cwd,
+        agent === "codex" ? "Codex" : "Claude Code",
+        skills,
         setSnapshot,
         setError,
       );
       await waitForSocket(socket);
       setRoomSecrets({ ...room, key });
       setController(nextController);
+      setSnapshot(nextController.snapshot());
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -234,12 +247,26 @@ function HostApp() {
         onCreateInvite={createInvite}
         onCloseRoom={endRoom}
         onEject={(connectionId) => roomSecrets && ejectRelayGuest(relayUrl, roomSecrets.roomId, roomSecrets.hostToken, connectionId)}
+        agent={agent}
+        model={model}
+        onSwitchAgent={async (nextAgent, nextModel) => {
+          if (nextAgent === agent && nextModel === model) return;
+          if (!confirm(`Switch this room to ${nextAgent === "codex" ? "Codex" : "Claude Code"}? The active turn will stop and the next prompt receives a handoff.`)) return;
+          await controller.switchAgent(nextAgent, nextModel);
+          await controller.setSkills(await codex.listSkills(cwd, nextAgent));
+          setAgent(nextAgent);
+          setModel(nextModel);
+        }}
+        onInstallSkill={async (source) => {
+          await codex.installSkillFromGitHub(source, cwd, agent);
+          await controller.setSkills(await codex.listSkills(cwd, agent));
+        }}
         error={error}
       />
     );
   }
 
-  const connectBlocker = connectDisabledReason(status, cwd, starting, installingDependency);
+  const connectBlocker = connectDisabledReason(status, agent, cwd, starting, installingDependency);
 
   return (
     <main className="setup-shell">
@@ -248,7 +275,7 @@ function HostApp() {
         <div>
           <p className="eyebrow">MULTIPLAYER AGENTIC DEVELOPMENT</p>
           <h1>Build together,<br /><span>through one agent.</span></h1>
-          <p className="lede">A shared Codex session with live prompts, steering, approvals, commands, and diffs. Your machine stays the host.</p>
+          <p className="lede">A shared local-agent session with live prompts, steering, approvals, commands, and diffs. Your machine stays the host.</p>
         </div>
         <div className="security-strip">
           <ShieldCheck size={18} />
@@ -262,9 +289,22 @@ function HostApp() {
           <div className="step-number">01</div>
           <div>
             <h2>Connect the host</h2>
-            <p>Silverfish uses your existing Codex login and starts a new thread automatically.</p>
+            <p>Choose a local coding agent and model. Silverfish keeps its login and workspace on this Mac.</p>
           </div>
-          <StatusGrid status={status} installing={installingDependency} onInstall={installDependency} />
+          <label>
+            <span>Local agent</span>
+            <select value={agent} onChange={(event) => setAgent(event.target.value as AgentKind)} disabled={starting}>
+              <option value="codex">Codex</option>
+              <option value="claude">Claude Code</option>
+            </select>
+          </label>
+          <label>
+            <span>Model</span>
+            <select value={model} onChange={(event) => setModel(event.target.value as AgentModel)} disabled={starting}>
+              {AGENT_MODELS[agent].map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <StatusGrid status={status} agent={agent} installing={installingDependency} onInstall={installDependency} />
           <label>
             <span>Workspace directory</span>
             <div className="path-picker">
@@ -299,29 +339,35 @@ function HostApp() {
 }
 
 function connectDisabledReason(
-  status: CodexStatus | undefined,
+  status: AgentStatus | undefined,
+  agent: AgentKind,
   cwd: string,
   starting: boolean,
   installing: OptionalDependency | undefined,
 ): string {
-  if (starting) return "Codex is already connecting.";
+  if (starting) return "A local agent is already connecting.";
   if (installing) return `Wait for the optional ${installing} installation to finish.`;
-  if (!status) return "Checking the required Codex dependency…";
-  if (!status.installed) return "Install and authenticate the Codex CLI before connecting.";
-  if (!status.compatible) return `Update Codex to version ${status.minimumVersion} or newer before connecting.`;
+  if (!status) return "Checking local agents…";
+  if (agent === "codex") {
+    if (!status.codex.installed) return "Install and authenticate the Codex CLI before connecting.";
+    if (!status.codex.compatible) return `Update Codex to version ${status.codex.minimumVersion} or newer before connecting.`;
+  } else {
+    if (!status.claude.installed) return "Install and authenticate Claude Code before connecting.";
+    if (!status.claude.approvalMediated) return "This Claude Code installation cannot provide shared approvals.";
+  }
   if (!cwd.trim()) return "Choose a workspace directory before connecting.";
   return "";
 }
 
-function StatusGrid({ status, installing, onInstall }: {
-  status?: CodexStatus;
+function StatusGrid({ status, agent, installing, onInstall }: {
+  status?: AgentStatus;
+  agent: AgentKind;
   installing?: OptionalDependency;
   onInstall: (dependency: OptionalDependency) => Promise<void>;
 }) {
-  const requiredRows = [
-    ["Codex CLI", status?.installed, status?.version || "Checking…"],
-    ["App-server API", status?.compatible, status ? `≥ ${status.minimumVersion}` : "Checking…"],
-  ] as const;
+  const requiredRows: Array<[string, boolean | undefined, string]> = agent === "codex"
+    ? [["Codex CLI", status?.codex.installed, status?.codex.version || "Checking…"], ["App-server API", status?.codex.compatible, status ? `≥ ${status.codex.minimumVersion}` : "Checking…"]]
+    : [["Claude Code", status?.claude.installed, status?.claude.version || "Checking…"], ["Shared approvals", status?.claude.approvalMediated, status?.claude.approvalMediated ? "Ready" : "Unavailable"]];
   const optionalRows: Array<{
     id: OptionalDependency;
     label: string;
@@ -330,15 +376,16 @@ function StatusGrid({ status, installing, onInstall }: {
   }> = [{
     id: "dcg",
     label: "Destructive guard",
-    ready: Boolean(status?.dcgInstalled && status?.dcgHookActive),
+    ready: Boolean(status?.codex.dcgInstalled && status?.codex.dcgHookActive),
     detail: installing === "dcg"
       ? "Installing…"
-      : status?.dcgHookActive
+      : status?.codex.dcgHookActive
         ? "Optional · hook active"
-        : status?.dcgInstalled
+        : status?.codex.dcgInstalled
           ? "Optional · click to configure"
           : "Optional · click to install",
   }];
+  if (agent === "claude") return <div className="status-grid">{requiredRows.map(([label, ready, detail]) => <div key={label} className="status-row"><span className={ready ? "status-dot ready" : "status-dot"} /><span>{label}</span><code>{detail}</code></div>)}</div>;
   return (
     <div className="status-grid">
       {requiredRows.map(([label, ready, detail]) => (
@@ -512,7 +559,7 @@ function applyHostEvent(current: RoomSnapshot, event: HostEvent, sequence: numbe
   return current;
 }
 
-function RoomShell({ snapshot, actions, isHost, projectName, connectionLabel, inviteToast, creatingInvite, onCreateInvite, onCloseRoom, onEject, error }: {
+function RoomShell({ snapshot, actions, isHost, projectName, connectionLabel, inviteToast, creatingInvite, onCreateInvite, onCloseRoom, onEject, agent, model, onSwitchAgent, onInstallSkill, error }: {
   snapshot: RoomSnapshot;
   actions: RoomActions;
   isHost: boolean;
@@ -523,16 +570,30 @@ function RoomShell({ snapshot, actions, isHost, projectName, connectionLabel, in
   onCreateInvite?: () => Promise<void>;
   onCloseRoom?: () => void;
   onEject?: (connectionId: string) => Promise<void> | undefined;
+  agent?: AgentKind;
+  model?: AgentModel;
+  onSwitchAgent?: (agent: AgentKind, model: AgentModel) => Promise<void>;
+  onInstallSkill?: (source: string) => Promise<void>;
   error?: string;
 }) {
   const [text, setText] = useState("");
   const [mode, setMode] = useState<"prompt" | "steer">("prompt");
+  const [skillQuery, setSkillQuery] = useState("");
+  const [showSkillInstall, setShowSkillInstall] = useState(false);
+  const [skillSource, setSkillSource] = useState("");
+  const [installingSkill, setInstallingSkill] = useState(false);
+  const [skillInstallError, setSkillInstallError] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
   const displayProjectName = projectName || snapshot.projectName || "Project";
   const stickyAgentMessageIndex = snapshot.timeline.reduce(
     (lastIndex, item, index) => item.kind === "agentMessage" && item.completed ? index : lastIndex,
     -1,
   );
+  const visibleSkills = useMemo(() => {
+    const query = skillQuery.trim().toLocaleLowerCase();
+    if (!query) return snapshot.skills;
+    return snapshot.skills.filter((skill) => `${skill.name} ${skill.description}`.toLocaleLowerCase().includes(query));
+  }, [skillQuery, snapshot.skills]);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [snapshot.timeline.length]);
@@ -545,12 +606,42 @@ function RoomShell({ snapshot, actions, isHost, projectName, connectionLabel, in
     else await actions.prompt(value);
   }
 
+  function addSkillToPrompt(skill: typeof snapshot.skills[number]) {
+    const instruction = `Use the ${skill.name} skill for this task.`;
+    setMode("prompt");
+    setText((current) => current.trim() ? `${instruction}\n\n${current}` : `${instruction}\n\n`);
+  }
+
+  async function installSkill() {
+    const source = skillSource.trim();
+    if (!source || !onInstallSkill) return;
+    setInstallingSkill(true);
+    setSkillInstallError("");
+    try {
+      await onInstallSkill(source);
+      setSkillSource("");
+      setShowSkillInstall(false);
+    } catch (reason) {
+      setSkillInstallError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setInstallingSkill(false);
+    }
+  }
+
   return (
     <main className="room-shell">
       <header className="room-header">
         <div className="room-brand"><div className="brand-mark small"><SilverfishMark size={21} /></div><strong>Silverfish</strong><span>/</span><span className="project-name" title={displayProjectName}>{displayProjectName}</span></div>
         <div className="room-status"><span className="live-dot" /> LIVE <span className="room-divider" /> {connectionLabel}</div>
         <div className="header-actions">
+          {isHost && agent && model && onSwitchAgent ? <span className="agent-switcher">
+            <select value={agent} aria-label="Active agent" onChange={(event) => void onSwitchAgent(event.target.value as AgentKind, "default")}>
+              <option value="codex">Codex</option><option value="claude">Claude Code</option>
+            </select>
+            <select value={model} aria-label="Active model" onChange={(event) => void onSwitchAgent(agent, event.target.value as AgentModel)}>
+              {AGENT_MODELS[agent].map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </span> : null}
           {isHost ? <button className="invite-link" onClick={() => void onCreateInvite?.()} disabled={creatingInvite} aria-label="Copy invite link">Invite <Link2 size={15} /></button> : null}
           {isHost && <button className="secondary end-room" onClick={onCloseRoom}>End room</button>}
           <button className="icon-button danger" title="Interrupt turn" disabled={!snapshot.activeTurnId} onClick={() => void actions.interrupt()}><CircleStop size={18} /></button>
@@ -582,7 +673,7 @@ function RoomShell({ snapshot, actions, isHost, projectName, connectionLabel, in
             <div className="composer">
               <textarea value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submit(); }
-              }} placeholder={mode === "steer" ? "Redirect the active turn…" : "Ask Codex to build, inspect, or change something…"} />
+              }} placeholder={mode === "steer" ? "Redirect the active turn…" : `Ask ${snapshot.agentName || "the agent"} to build, inspect, or change something…`} />
               <button onClick={() => void submit()} disabled={!text.trim()}><Send size={18} /></button>
             </div>
             <div className="composer-foot"><span>Enter to send · Shift+Enter for newline</span><span>{text.length.toLocaleString()} / 32,000</span></div>
@@ -591,6 +682,22 @@ function RoomShell({ snapshot, actions, isHost, projectName, connectionLabel, in
         <aside className="room-sidebar">
           <SidebarSection icon={<Users size={15} />} title="In this room" count={snapshot.participants.length}>
             <div className="participants">{snapshot.participants.map((person) => <div className="participant" key={person.connectionId}><span className="avatar">{person.displayName.slice(0, 1).toUpperCase()}</span><span>{person.displayName}</span>{person.isHost ? <em>HOST</em> : isHost && <button className="eject-button" title="Remove and revoke guest" onClick={() => void onEject?.(person.connectionId)}><X size={12} /></button>}<span className="online-dot" /></div>)}</div>
+          </SidebarSection>
+          <SidebarSection icon={<Sparkles size={15} />} title="Agent skills" count={snapshot.skills.length} action={isHost ? <button className="tiny-button skill-install-toggle" onClick={() => setShowSkillInstall((visible) => !visible)} title="Install a GitHub skill"><Download size={13} /></button> : undefined}>
+            <p className="skills-note">Available on the host. Add one to the next prompt so everyone sees the capability in play.</p>
+            {showSkillInstall ? <div className="skill-install-form"><label><span>GitHub skill URL</span><input value={skillSource} onChange={(event) => setSkillSource(event.target.value)} placeholder="https://github.com/owner/repo/tree/main/skills/example" /></label><button onClick={() => void installSkill()} disabled={!skillSource.trim() || installingSkill}>{installingSkill ? "Installing…" : `Install to ${agent === "claude" ? "Claude Code" : "Codex"}`}</button><small>Installs to this host’s active {agent === "claude" ? ".claude/skills" : "Codex skills"} directory. Available on the next turn.</small>{skillInstallError ? <p>{skillInstallError}</p> : null}</div> : null}
+            <label className="skill-search"><Search size={13} /><input value={skillQuery} onChange={(event) => setSkillQuery(event.target.value)} placeholder="Search skills" aria-label="Search agent skills" /></label>
+            <div className="skill-list">
+              {visibleSkills.length === 0 ? <p className="sidebar-empty">{snapshot.skills.length === 0 ? "No skills shared by the host" : "No matching skills"}</p> : visibleSkills.slice(0, 12).map((skill) => (
+                <button className="skill-row" key={skill.name} onClick={() => addSkillToPrompt(skill)} title={`Add ${skill.name} to the next prompt`}>
+                  <span><strong>{skill.name}</strong><small>{skill.description}</small></span><ChevronRight size={14} />
+                </button>
+              ))}
+            </div>
+          </SidebarSection>
+          <SidebarSection icon={<Command size={15} />} title="MCP bridge" count={2}>
+            <p className="skills-note">The agent sees one bridge, then discovers only the MCP API it needs.</p>
+            <div className="bridge-tools"><span><code>search_capabilities</code><small>find a matching API</small></span><span><code>execute</code><small>run the selected tool</small></span></div>
           </SidebarSection>
           <SidebarSection icon={<Activity size={15} />} title="Prompt queue" count={snapshot.queue.length} action={
             <button className="tiny-button" onClick={() => void actions.pause(!snapshot.queuePaused)}>{snapshot.queuePaused ? <Play size={13} /> : <Pause size={13} />}</button>
